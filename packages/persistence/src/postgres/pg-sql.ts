@@ -3,8 +3,85 @@ import type { DatabaseTransaction } from '../database/database-transaction.inter
 import type { Database } from '../database/database.interface.js';
 import type { FilterQuery } from '../db-adapter/filter-query.type.js';
 import type { SelectOptions } from '../db-adapter/read-db-adapter.interface.js';
+import {
+  ALL_FILTER_OPERATORS,
+  FILTER_DELIMITER,
+  type FilterOperator,
+} from '../query/field-descriptor.type.js';
 
 export type ColumnTypeMap = Record<string, string>;
+
+const KNOWN_OPERATORS: ReadonlySet<FilterOperator> = new Set(ALL_FILTER_OPERATORS);
+
+/**
+ * Splits a filter key like `expiresAt__lt` into its field and operator.
+ * Keys with no `__` suffix default to `eq` and report `hadSuffix: false`,
+ * letting callers apply suffix-only rules (e.g. stricter field-name
+ * validation) without re-deriving whether a suffix was present. Shared by
+ * the read-side `SqlQueryBuilder` and the write-side `buildWhere` so both
+ * sides use one operator vocabulary.
+ */
+export function parseFilterKey(rawKey: string): {
+  field: string;
+  operator: FilterOperator;
+  hadSuffix: boolean;
+} {
+  const delimiterIndex = rawKey.indexOf(FILTER_DELIMITER);
+  if (delimiterIndex < 0) {
+    return { field: rawKey, operator: 'eq', hadSuffix: false };
+  }
+  const field = rawKey.slice(0, delimiterIndex);
+  const opString = rawKey.slice(delimiterIndex + FILTER_DELIMITER.length);
+  if (!KNOWN_OPERATORS.has(opString as FilterOperator)) {
+    throw new Error(
+      `unknown operator "${opString}" in key "${rawKey}". ` +
+        `Known operators: ${[...KNOWN_OPERATORS].join(', ')}.`,
+    );
+  }
+  return { field, operator: opString as FilterOperator, hadSuffix: true };
+}
+
+/**
+ * Renders a single filter operator to a SQL fragment. `pushParam` is a
+ * caller-supplied callback that pushes a value into the caller's own params
+ * array and returns the placeholder text — the write side casts it
+ * (`$n::TYPE`/`$n::TYPE[]`, choosing the array form itself since it already
+ * has `operator` in scope), the read side doesn't need to cast at all.
+ * `isNull`/`isNotNull` never call `pushParam`: no parameter is bound.
+ */
+export function buildFilterClause(
+  column: string,
+  operator: FilterOperator,
+  value: unknown,
+  pushParam: (value: unknown) => string,
+): string {
+  switch (operator) {
+    case 'eq':
+      return value === null ? `${column} IS NULL` : `${column} = ${pushParam(value)}`;
+    case 'contains':
+      return `${column} ILIKE ${pushParam(`%${String(value)}%`)}`;
+    case 'in':
+      return `${column} = ANY(${pushParam(value)})`;
+    case 'notIn':
+      return `(${column} <> ALL(${pushParam(value)}) OR ${column} IS NULL)`;
+    case 'gt':
+      return `${column} > ${pushParam(value)}`;
+    case 'gte':
+      return `${column} >= ${pushParam(value)}`;
+    case 'lt':
+      return `${column} < ${pushParam(value)}`;
+    case 'lte':
+      return `${column} <= ${pushParam(value)}`;
+    case 'isNull':
+      return value === false ? `${column} IS NOT NULL` : `${column} IS NULL`;
+    case 'isNotNull':
+      return value === false ? `${column} IS NULL` : `${column} IS NOT NULL`;
+    default: {
+      const exhaustive: never = operator;
+      throw new Error(`Unhandled filter operator: ${String(exhaustive)}`);
+    }
+  }
+}
 
 /**
  * Maps `information_schema.columns.data_type` (or `udt_name` for arrays)
@@ -54,8 +131,11 @@ export function mapPostgresType(dataType: string | undefined): string {
 }
 
 /**
- * Builds a parameterised `WHERE` clause from a `FilterQuery`. Scalar values
- * emit `col = $n::TYPE`; arrays emit `col = ANY($n::TYPE[])`.
+ * Builds a parameterised `WHERE` clause from a `FilterQuery`. Bare keys emit
+ * `col = $n::TYPE` (or `col = ANY($n::TYPE[])` for an array value, as sugar
+ * for `col__in`); a literal `null` emits `col IS NULL` with no parameter.
+ * Suffixed keys (`col__lt`, `col__in`, `col__isNull`, etc.) dispatch through
+ * the same operator vocabulary as the read-side `SqlQueryBuilder`.
  *
  * `startIndex` is the placeholder offset — pass the number of params
  * already consumed upstream (e.g. by a SET clause in UPDATE). Read-side
@@ -66,20 +146,23 @@ export function buildWhere<T>(
   types: ColumnTypeMap,
   startIndex = 0,
 ): { sql: string; values: unknown[] } {
-  const entries = Object.entries(filters);
+  const entries = Object.entries(filters as Record<string, unknown>);
   if (entries.length === 0) {
     throw new Error('WHERE clause requires at least one filter');
   }
 
   const values: unknown[] = [];
-  const clauses = entries.map(([key, value]) => {
-    const pgType = mapPostgresType(types[key]);
-    if (Array.isArray(value)) {
+  const clauses = entries.map(([rawKey, rawValue]) => {
+    const { field, operator: parsedOperator } = parseFilterKey(rawKey);
+    const operator = parsedOperator === 'eq' && Array.isArray(rawValue) ? 'in' : parsedOperator;
+    const isArrayOperator = operator === 'in' || operator === 'notIn';
+
+    return buildFilterClause(field, operator, rawValue, (value) => {
+      const pgType = mapPostgresType(types[field]);
       values.push(value);
-      return `${key} = ANY($${startIndex + values.length}::${pgType}[])`;
-    }
-    values.push(value);
-    return `${key} = $${startIndex + values.length}::${pgType}`;
+      const idx = startIndex + values.length;
+      return isArrayOperator ? `$${idx}::${pgType}[]` : `$${idx}::${pgType}`;
+    });
   });
 
   return { sql: clauses.join(' AND '), values };

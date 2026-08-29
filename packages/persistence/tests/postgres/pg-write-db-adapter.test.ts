@@ -234,6 +234,12 @@ describe('PgWriteDbAdapter', () => {
       expect(db.calls[0]?.sql).toBe('DELETE FROM users WHERE id = ANY($1::UUID[])');
       expect(db.calls[0]?.params).toEqual([['u1', 'u2']]);
     });
+
+    it('emits IS NULL for a literal null where value, with no parameter', async () => {
+      await adapter.delete({ table: 'users', where: { name: null } });
+      expect(db.calls[0]?.sql).toBe('DELETE FROM users WHERE name IS NULL');
+      expect(db.calls[0]?.params).toEqual([]);
+    });
   });
 
   describe('find / findForUpdate', () => {
@@ -268,6 +274,24 @@ describe('PgWriteDbAdapter', () => {
         orderBy: [{ column: 'created_at', direction: 'desc' }],
       });
       expect(db.calls[0]?.sql).toContain('ORDER BY created_at DESC');
+    });
+
+    it('reproduces the sweep-job shape: locked, range-filtered, ordered', async () => {
+      const trx = {} as DatabaseTransaction;
+      const now = new Date('2026-08-29T00:00:00.000Z');
+      await adapter.findForUpdate(
+        {
+          table: 'users',
+          where: { name: 'PENDING', created_at__lt: now },
+          orderBy: [{ column: 'id', direction: 'asc' }],
+        },
+        trx,
+      );
+      expect(db.calls[0]?.sql).toBe(
+        'SELECT * FROM users WHERE name = $1::TEXT AND created_at < $2::TIMESTAMPTZ ORDER BY id ASC FOR UPDATE',
+      );
+      expect(db.calls[0]?.params).toEqual(['PENDING', now]);
+      expect(db.calls[0]?.trx).toBe(trx);
     });
   });
 

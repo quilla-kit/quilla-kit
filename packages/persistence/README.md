@@ -196,6 +196,47 @@ try {
 }
 ```
 
+### Filtering on write DAOs
+
+`WriteDbAdapter`'s `where` option (used by `BaseWriteDao`'s `findOne` /
+`findMany` / `findOneForUpdate` / `findManyForUpdate` / `update` / `delete` /
+`exists`) accepts the same operator-suffix DSL as the read-side
+`SqlQueryBuilder` — see [The filter suffix DSL](#the-filter-suffix-dsl) below
+for the full operator table. Two differences from the read side:
+
+- Keys are **raw DB column names** (`expires_at__lt`), not the camelCase,
+  `ColumnResolver`-resolved names `SqlQueryBuilder` uses — write DAOs have no
+  resolver.
+- A `bigint`/`numeric` column typed as `string` in your row type (common,
+  to avoid JS float-precision loss) won't get `__gt/__gte/__lt/__lte` —
+  those are only available where TypeScript can see `number | Date`.
+
+This is what makes a locked, range-filtered sweep read possible without
+hand-written SQL:
+
+```ts
+await uow.transaction(async (ctx) => {
+  const pending = await replacementDao.findManyForUpdate(
+    { status: 'PENDING', expiresAt__lt: new Date() },
+    ctx.trx,
+  );
+  for (const row of pending) {
+    // transition each row in the same locked transaction
+  }
+});
+```
+
+**Behavior note:** a literal `null` for a bare key (`{ status: null }`) emits
+`status IS NULL`, not `status = $1` with a `null` parameter — the latter
+never matches in Postgres.
+
+**Sharp edge — `__notIn` on `delete`/`update`:** `field__notIn` compiles to
+`(field <> ALL($n) OR field IS NULL)`, matching the read side's null-safe
+`NOT IN` semantics. On a destructive write, this also matches rows where
+`field IS NULL`: `delete({ status__notIn: ['DONE'] })` deletes every row with
+`status IS NULL` too, not just rows with some other non-`DONE` status. Confirm
+that's actually intended before using `__notIn` in a `delete` or `update`.
+
 ## Mappers — row ↔ aggregate conversion
 
 `BasePersistenceMapper` handles the bidirectional row↔aggregate conversion
@@ -420,7 +461,7 @@ The same resolver applies to `.filters()`, `.orderBy()`, and `.groupBy()`. `this
 
 ### The filter suffix DSL
 
-`.filters({ ... })` accepts a flat object keyed by `field` or `field__operator`. The delimiter is double-underscore (`__`) to avoid collisions with field names that contain underscores.
+`.filters({ ... })` accepts a flat object keyed by `field` or `field__operator`. The delimiter is double-underscore (`__`) to avoid collisions with field names that contain underscores. The same vocabulary is also available on write DAOs' `where` filters — see [Filtering on write DAOs](#filtering-on-write-daos) above for the write-side caveats.
 
 | Operator | SQL | Available for |
 | --- | --- | --- |
