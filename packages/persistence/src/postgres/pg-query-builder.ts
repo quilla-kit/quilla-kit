@@ -1,9 +1,4 @@
 import type { ColumnResolver } from '../query/column-resolver.interface.js';
-import {
-  ALL_FILTER_OPERATORS,
-  FILTER_DELIMITER,
-  type FilterOperator,
-} from '../query/field-descriptor.type.js';
 import type { SortOption } from '../query/list-query.type.js';
 import type { QueryProduct } from '../query/query-product.type.js';
 import type {
@@ -11,6 +6,7 @@ import type {
   PaginateOptions,
   SqlQueryBuilder,
 } from '../query/sql-query-builder.interface.js';
+import { buildFilterClause, parseFilterKey } from './pg-sql.js';
 
 const IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const QUALIFIED_IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/;
@@ -19,8 +15,6 @@ const FROM_RE =
   /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?(\s+(AS\s+)?[a-zA-Z_][a-zA-Z0-9_]*)?$/i;
 const ALIAS_RE = /^(.+?)\s+AS\s+"([a-zA-Z_][a-zA-Z0-9_]*)"$/i;
 const STAR_RE = /^([a-zA-Z_][a-zA-Z0-9_]*\.)?\*$/;
-
-const KNOWN_OPERATORS: ReadonlySet<FilterOperator> = new Set(ALL_FILTER_OPERATORS);
 
 type BuilderState = {
   readonly columns: readonly string[];
@@ -186,35 +180,22 @@ export class PgSqlQueryBuilder<TRow = unknown> implements SqlQueryBuilder<TRow> 
     return { whereSql: fragments.join(' AND ') };
   }
 
-  private filterFragment(rawKey: string, value: unknown, params: unknown[]): string | null {
-    const { field, operator } = parseFilterKey(rawKey);
-    const column = this.resolveOrPassThrough(field);
-
-    switch (operator) {
-      case 'eq':
-        if (value === null) return `${column} IS NULL`;
-        return `${column} = ${pushParam(params, value)}`;
-      case 'contains':
-        return `${column} ILIKE ${pushParam(params, `%${String(value)}%`)}`;
-      case 'in':
-        return `${column} = ANY(${pushParam(params, value)})`;
-      case 'notIn':
-        return `(${column} <> ALL(${pushParam(params, value)}) OR ${column} IS NULL)`;
-      case 'gt':
-        return `${column} > ${pushParam(params, value)}`;
-      case 'gte':
-        return `${column} >= ${pushParam(params, value)}`;
-      case 'lt':
-        return `${column} < ${pushParam(params, value)}`;
-      case 'lte':
-        return `${column} <= ${pushParam(params, value)}`;
-      case 'isNull':
-        return value === false ? `${column} IS NOT NULL` : `${column} IS NULL`;
-      case 'isNotNull':
-        return value === false ? `${column} IS NULL` : `${column} IS NOT NULL`;
-      default:
-        return null;
+  private filterFragment(rawKey: string, value: unknown, params: unknown[]): string {
+    const { field, operator, hadSuffix } = parseFilterKey(rawKey);
+    const isBareIdent = IDENT_RE.test(field);
+    // Only suffixed keys are field-name-validated here: a bare key (no
+    // `__operator`) may be a dotted qualified reference, which
+    // `validateQualifiedIdentifier` below already validates on its own terms.
+    if (hadSuffix && !isBareIdent) {
+      throw new Error(`SqlQueryBuilder.filters: invalid field name "${field}" in key "${rawKey}".`);
     }
+    // Reuses `isBareIdent` instead of calling `resolveOrPassThrough` (which
+    // would re-run the same `IDENT_RE` test internally).
+    if (!isBareIdent) {
+      validateQualifiedIdentifier(field, 'column reference');
+    }
+    const column = isBareIdent ? this.resolver.resolve(field) : field;
+    return buildFilterClause(column, operator, value, (v) => pushParam(params, v));
   }
 
   private buildOrderSql(): string {
@@ -282,25 +263,6 @@ function rebaseQuestionMarks(
     );
   }
   return rebased;
-}
-
-function parseFilterKey(rawKey: string): { field: string; operator: FilterOperator } {
-  const delimiterIndex = rawKey.indexOf(FILTER_DELIMITER);
-  if (delimiterIndex < 0) {
-    return { field: rawKey, operator: 'eq' };
-  }
-  const field = rawKey.slice(0, delimiterIndex);
-  const opString = rawKey.slice(delimiterIndex + FILTER_DELIMITER.length);
-  if (!KNOWN_OPERATORS.has(opString as FilterOperator)) {
-    throw new Error(
-      `SqlQueryBuilder.filters: unknown operator "${opString}" in key "${rawKey}". ` +
-        `Known operators: ${[...KNOWN_OPERATORS].join(', ')}.`,
-    );
-  }
-  if (!IDENT_RE.test(field)) {
-    throw new Error(`SqlQueryBuilder.filters: invalid field name "${field}" in key "${rawKey}".`);
-  }
-  return { field, operator: opString as FilterOperator };
 }
 
 function validateSelectColumn(column: string): void {
