@@ -237,6 +237,19 @@ never matches in Postgres.
 `status IS NULL` too, not just rows with some other non-`DONE` status. Confirm
 that's actually intended before using `__notIn` in a `delete` or `update`.
 
+**Migration note — casting to `FilterQuery<T>` inside a generic method:**
+`FilterQuery<T>` is now an intersection of several mapped types (the base
+shape plus one per operator group). TypeScript can verify `Partial<Row>`
+against `FilterQuery<Row>` for a *concrete* `Row`, but it can't verify
+`Partial<T>` against `FilterQuery<T>` when `T` is still an unresolved generic
+parameter — even though every added property is optional. If you have a
+generic base repository/DAO method that builds a `Partial<TRow>` and passes
+it somewhere typed `FilterQuery<TRow>`, that assignment will now fail to
+compile. Cast directly to `FilterQuery<TRow>` instead of routing through
+`Partial<TRow>` first — e.g. `{ id } as FilterQuery<TRow>`, not
+`{ id } as Partial<TRow>` — which sidesteps the generic-assignability gap
+entirely (this is the pattern `BaseWriteDao` uses internally).
+
 ## Mappers — row ↔ aggregate conversion
 
 `BasePersistenceMapper` handles the bidirectional row↔aggregate conversion
