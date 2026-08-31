@@ -1,6 +1,6 @@
 {
   "name": "@quilla-be-kit/security",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "Security primitives: Token/TokenService, PasswordHasher, SessionStore interfaces, and auth middlewares (Bearer-token verification + authenticated-session enrichment) that plug into @quilla-be-kit/http's Router.",
   "license": "MIT",
   "author": "Max Martinez",
