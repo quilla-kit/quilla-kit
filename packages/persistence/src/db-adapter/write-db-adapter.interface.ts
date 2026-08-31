@@ -38,6 +38,7 @@ export type UpdateManyOptions = {
 export type DeleteOptions<T> = {
   readonly table: string;
   readonly where: FilterQuery<T>;
+  readonly optimisticLock?: OptimisticLock;
 };
 
 export type ExistsOptions<T> = {

@@ -67,8 +67,17 @@ describe('BaseBasicRepository', () => {
   });
 
   it('delete delegates to dao.delete', async () => {
-    await repo.delete('t1', trx);
+    await repo.delete({ id: 't1' }, trx);
     expect(adapter.deleteCalls[0]?.opts.where).toEqual({ id: 't1' });
+  });
+
+  it('delete passes updated_at as optimisticLock when present', async () => {
+    const updatedAt = new Date('2026-01-01');
+    await repo.delete({ id: 't1', updated_at: updatedAt }, trx);
+    expect(adapter.deleteCalls[0]?.opts.optimisticLock).toEqual({
+      column: 'updated_at',
+      expected: updatedAt,
+    });
   });
 
   it('deleteMany delegates to dao.deleteMany', async () => {

@@ -136,8 +136,20 @@ export class PgWriteDbAdapter implements WriteDbAdapter {
   async delete<T>(opts: DeleteOptions<T>, trx?: DatabaseTransaction): Promise<DatabaseResult> {
     const types = await this.columnTypes.get(opts.table);
     const where = buildWhere(opts.where, types);
-    const sql = `DELETE FROM ${opts.table} WHERE ${where.sql}`;
-    return this.db.query(sql, where.values, trx);
+    const values = [...where.values];
+
+    let whereSql = where.sql;
+    if (opts.optimisticLock) {
+      values.push(
+        opts.optimisticLock.expected instanceof Date
+          ? opts.optimisticLock.expected.toISOString()
+          : opts.optimisticLock.expected,
+      );
+      whereSql += ` AND ${opts.optimisticLock.column} = ${timestampComparison(values.length)}`;
+    }
+
+    const sql = `DELETE FROM ${opts.table} WHERE ${whereSql}`;
+    return this.db.query(sql, values, trx);
   }
 
   async find<T>(opts: SelectOptions<T>, trx?: DatabaseTransaction): Promise<readonly T[]> {

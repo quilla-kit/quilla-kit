@@ -240,6 +240,21 @@ describe('PgWriteDbAdapter', () => {
       expect(db.calls[0]?.sql).toBe('DELETE FROM users WHERE name IS NULL');
       expect(db.calls[0]?.params).toEqual([]);
     });
+
+    it('appends optimistic-lock clause when optimisticLock present (Date → ISO)', async () => {
+      const expectedAt = new Date('2026-04-01T12:00:00.000Z');
+      await adapter.delete({
+        table: 'users',
+        where: { id: 'u1' },
+        optimisticLock: { column: 'updated_at', expected: expectedAt },
+      });
+
+      const call = db.calls[0];
+      expect(call?.sql).toBe(
+        "DELETE FROM users WHERE id = $1::UUID AND updated_at = date_trunc('milliseconds', $2::timestamptz)",
+      );
+      expect(call?.params).toEqual(['u1', '2026-04-01T12:00:00.000Z']);
+    });
   });
 
   describe('find / findForUpdate', () => {

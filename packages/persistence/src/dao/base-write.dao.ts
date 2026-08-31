@@ -22,6 +22,11 @@ import { AUDIT_COLUMNS, INSERT_EXCLUDED_KEYS, UPDATE_EXCLUDED_KEYS } from './aud
  * concurrency control should `findManyForUpdate` first; the row-level
  * locks held inside `trx` serialize concurrent writers for the duration
  * of the unit of work. `trx` is required.
+ *
+ * `delete` accepts an optional `updated_at` (mirroring `update`'s
+ * optimistic-lock contract) and throws `OptimisticLockError` if the row
+ * was concurrently modified since it was read. `deleteMany` has no
+ * per-row lock, for the same reason as `updateMany`.
  */
 export abstract class BaseWriteDao<TRow extends { id: string }> {
   protected abstract readonly tableName: string;
@@ -113,14 +118,25 @@ export abstract class BaseWriteDao<TRow extends { id: string }> {
     await this.adapter.updateMany({ table: this.tableName, rows: prepared }, trx);
   }
 
-  async delete(id: string, trx?: DatabaseTransaction): Promise<void> {
-    await this.adapter.delete<TRow>(
+  async delete(
+    row: { id: string; updated_at?: Date | undefined },
+    trx?: DatabaseTransaction,
+  ): Promise<void> {
+    const { id, updated_at } = row;
+    const result = await this.adapter.delete<TRow>(
       {
         table: this.tableName,
         where: { id } as FilterQuery<TRow>,
+        ...(updated_at !== undefined
+          ? { optimisticLock: { column: AUDIT_COLUMNS.updatedAt, expected: updated_at } }
+          : {}),
       },
       trx,
     );
+
+    if (updated_at !== undefined && result.rowCount === 0) {
+      throw new OptimisticLockError({ entity: this.tableName, id });
+    }
   }
 
   async deleteMany(ids: readonly string[], trx?: DatabaseTransaction): Promise<void> {
