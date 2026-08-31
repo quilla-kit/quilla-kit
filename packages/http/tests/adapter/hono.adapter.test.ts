@@ -17,6 +17,7 @@ import type {
 import type { ResponseSerializer } from '../../src/request/response-serializer.interface.js';
 import type { AuthMiddlewareStack } from '../../src/router/auth-middleware-stack.type.js';
 import { Router } from '../../src/router/router.js';
+import type { CorsOptions } from '../../src/server/cors.type.js';
 import type { HttpConventions } from '../../src/server/http-conventions.type.js';
 import type { RequestValidator } from '../../src/validator/request-validator.interface.js';
 
@@ -52,7 +53,7 @@ function buildServer(options: {
   authStacks?: Readonly<Record<string, AuthMiddlewareStack>>;
   defaultAuthStack?: string;
   controllers?: readonly object[];
-  cors?: { origins: string[] };
+  cors?: CorsOptions;
   conventions?: HttpConventions;
 }): {
   server: HonoServer;
@@ -372,6 +373,30 @@ describe('HonoServer CORS', () => {
     );
     expect(res.status).toBe(200);
     expect(res.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
+  it('exposes ETag by default', async () => {
+    const { fetch } = buildServer({ cors: { origins: ['https://app.example.com'] } });
+    const res = await fetch(
+      new Request('http://localhost/users/42', {
+        headers: { origin: 'https://app.example.com' },
+      }),
+    );
+    expect(res.headers.get('access-control-expose-headers')).toBe('ETag');
+  });
+
+  it('exposes consumer-supplied headers alongside the default ETag', async () => {
+    const { fetch } = buildServer({
+      cors: { origins: ['https://app.example.com'], exposeHeaders: ['X-Request-Id'] },
+    });
+    const res = await fetch(
+      new Request('http://localhost/users/42', {
+        headers: { origin: 'https://app.example.com' },
+      }),
+    );
+    const exposed = res.headers.get('access-control-expose-headers');
+    expect(exposed).toContain('ETag');
+    expect(exposed).toContain('X-Request-Id');
   });
 });
 

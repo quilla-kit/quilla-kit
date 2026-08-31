@@ -573,7 +573,7 @@ export interface WebServer {
 - `listen()` — starts accepting connections.
 - `close()` — stops accepting connections and awaits in-flight requests.
 
-`HonoServer implements WebServer`. Future adapters (Express, Fastify) would ship as additional sub-paths implementing the same interface — `const server: WebServer = new HonoServer(...)` stays the shape your composition root depends on.
+`HonoServer implements WebServer`. Future adapters (Express, Fastify) would ship as additional sub-paths implementing the same interface — `const server: WebServer = new HonoServer(...)` stays the shape your composition root depends on. Cross-cutting config that isn't framework-specific — `HttpConventions`, `CorsOptions` — lives alongside `WebServer` in the package root rather than inside an adapter, so every adapter's constructor options accept the same shapes.
 
 ## Hono adapter
 
@@ -609,7 +609,7 @@ Consumer never constructs `HonoRequestAdapter` or `HonoMiddlewareAdapter` direct
 
 ### CORS
 
-Pass `cors: { origins: string[] }` to enable CORS. `HonoServer` registers Hono's built-in `cors()` middleware before any route, so preflight and actual requests are both handled — no extra dependency required (`hono/cors` ships with Hono).
+Pass `cors: CorsOptions` (`{ origins: string[], exposeHeaders?: string[] }`, exported from `@quilla-be-kit/http`) to enable CORS. `CorsOptions` is adapter-agnostic — any `WebServer` implementation accepts the same shape and translates it to its underlying framework's CORS mechanism. `HonoServer` registers Hono's built-in `cors()` middleware before any route, so preflight and actual requests are both handled — no extra dependency required (`hono/cors` ships with Hono).
 
 ```ts
 const server = new HonoServer({
@@ -618,6 +618,7 @@ const server = new HonoServer({
   serve: honoServe,
   cors: {
     origins: ['https://app.example.com', 'http://localhost:5173'],
+    exposeHeaders: ['X-Request-Id'], // optional — 'ETag' is always exposed
   },
 });
 ```
@@ -630,8 +631,11 @@ Defaults applied when `cors` is set:
 |---|---|
 | `Access-Control-Allow-Methods` | `GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS` |
 | `Access-Control-Allow-Headers` | `Content-Type, Authorization, If-Match, ETag` |
+| `Access-Control-Expose-Headers` | `ETag` (plus anything in `exposeHeaders`) |
 | `Access-Control-Allow-Credentials` | `true` |
 | `Access-Control-Max-Age` | `86400` (24 h) |
+
+`ETag` is exposed by default so cross-origin browser clients implementing optimistic concurrency control (OCC) can read the response header — see [`@quilla-be-kit/persistence`](../persistence/README.md) for OCC support. Use `exposeHeaders` to expose additional custom response headers.
 
 If you need non-default values, omit `cors` and wire `hono/cors` yourself inside the `serve` callback, or raise an issue.
 
