@@ -35,8 +35,19 @@ pnpm add pg
   get stripped. Writes under system contexts (no session) persist
   `null` audit.
 - **Optimistic locking is opt-in via `updated_at`.** Include `updated_at`
-  in the row passed to `update()` and the DAO asserts `rowCount === 1` —
-  mismatch throws `OptimisticLockError`. Omit to update unconditionally.
+  in the row passed to `update()`, or as `row.updated_at` passed to
+  `delete()`, and the DAO asserts `rowCount === 1` — a zero-row match
+  throws `OptimisticLockError`, whether that's because `updated_at` no
+  longer matched or because the row was already gone. `OptimisticLockError`
+  therefore means "the row wasn't in the expected state," not strictly
+  "someone else just modified it" — callers that need to tell "conflict"
+  apart from "already deleted" must check existence themselves (e.g. a
+  preceding `findOneById`). Omit `updated_at` to update/delete
+  unconditionally. `BaseAggregateRepository.delete()` threads
+  `aggregate.updatedAt` through automatically. `updateMany`/`deleteMany`
+  have no per-row lock — callers needing concurrency control on a bulk
+  write should `findManyForUpdate` first; the row-level locks held inside
+  the transaction already serialize concurrent writers.
 - **Outbox is orthogonal, not built-in.** Wire an `OutboxWriter` on
   `UnitOfWork` to drain aggregate events + registered integration events
   in the same transaction. Omit for apps that don't use outbox.
@@ -174,10 +185,15 @@ shutdown.addPhase({
 
 ### Handling optimistic lock conflicts
 
-When an update includes `updated_at` in the input row, the DAO asserts
-`rowCount === 1` and throws `OptimisticLockError` (extends `ConflictError`
-from `@quilla-be-kit/errors`) on a mismatch. Catch it at the command handler
-boundary and retry or surface a 409 to the client:
+When an update includes `updated_at` in the input row, or a delete includes
+`updated_at` alongside `id`, the DAO asserts `rowCount === 1` and throws
+`OptimisticLockError` (extends `ConflictError` from `@quilla-be-kit/errors`)
+on a zero-row match. Note this fires both when `updated_at` no longer
+matches (a real concurrent modification) **and** when the row no longer
+exists at all — the WHERE clause can't distinguish the two. Catch it at the
+command handler boundary and retry or surface a 409 to the client; if your
+caller needs to tell "conflict" apart from "already gone," check existence
+first (e.g. `findOneById`) rather than relying on the error alone:
 
 ```ts
 import { OptimisticLockError } from '@quilla-be-kit/persistence';
@@ -195,6 +211,24 @@ try {
   throw err;
 }
 ```
+
+`BaseWriteDao.delete()` takes the same shape as `update()`'s row —
+`{ id, updated_at? }` — instead of a bare id, so it can opt into the same
+lock:
+
+```ts
+// Unconditional delete:
+await userDao.delete({ id: userId }, ctx.trx);
+
+// CAS-protected delete — throws OptimisticLockError if the row changed
+// (or was already deleted) since it was read:
+await userDao.delete({ id: userId, updated_at: knownUpdatedAt }, ctx.trx);
+```
+
+`BaseAggregateRepository.delete(aggregate, ctx)` passes `aggregate.updatedAt`
+through automatically, so aggregate deletes get CAS protection for free
+whenever the aggregate was loaded via `loadForUpdate*` (no code change
+needed at call sites above the repository).
 
 ### Filtering on write DAOs
 

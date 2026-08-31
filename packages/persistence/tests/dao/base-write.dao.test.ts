@@ -203,8 +203,37 @@ describe('BaseWriteDao', () => {
 
   describe('delete', () => {
     it('passes id as where clause', async () => {
-      await dao.delete('u1');
+      await dao.delete({ id: 'u1' });
       expect(adapter.deleteCalls[0]?.opts.where).toEqual({ id: 'u1' });
+    });
+
+    it('passes updated_at as optimisticLock when present', async () => {
+      const updatedAt = new Date('2026-01-01');
+      await dao.delete({ id: 'u1', updated_at: updatedAt }, trx);
+
+      expect(adapter.deleteCalls[0]?.opts.optimisticLock).toEqual({
+        column: 'updated_at',
+        expected: updatedAt,
+      });
+    });
+
+    it('omits optimisticLock when updated_at is absent', async () => {
+      await dao.delete({ id: 'u1' }, trx);
+      expect(adapter.deleteCalls[0]?.opts.optimisticLock).toBeUndefined();
+    });
+
+    it('throws OptimisticLockError when rowCount is 0 and updated_at was provided', async () => {
+      adapter.deleteResults = [{ rows: [], rowCount: 0 }];
+
+      await expect(dao.delete({ id: 'u1', updated_at: new Date() }, trx)).rejects.toThrow(
+        OptimisticLockError,
+      );
+    });
+
+    it('does not throw when rowCount is 0 but no optimistic lock was requested', async () => {
+      adapter.deleteResults = [{ rows: [], rowCount: 0 }];
+
+      await expect(dao.delete({ id: 'u1' }, trx)).resolves.toBeUndefined();
     });
   });
 

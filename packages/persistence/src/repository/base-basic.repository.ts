@@ -25,8 +25,11 @@ export abstract class BaseBasicRepository<TRow extends { id: string }> {
     await this.writeDao.updateMany(rows, trx);
   }
 
-  async delete(id: string, trx?: DatabaseTransaction): Promise<void> {
-    await this.writeDao.delete(id, trx);
+  async delete(
+    row: { id: string; updated_at?: Date | undefined },
+    trx?: DatabaseTransaction,
+  ): Promise<void> {
+    await this.writeDao.delete(row, trx);
   }
 
   async deleteMany(ids: readonly string[], trx?: DatabaseTransaction): Promise<void> {

@@ -88,6 +88,39 @@ describe('BaseUnscopedAggregateRepository', () => {
     });
   });
 
+  describe('delete', () => {
+    it('passes aggregate.updatedAt through as optimisticLock', async () => {
+      const updatedAt = new Date('2026-01-01');
+      const agg = new TestAggregate({ id: 'a1', name: 'foo', updatedAt }, 'a1');
+      const ctx = {
+        trx,
+        registerAggregate: () => {},
+        registerIntegrationEvent: () => {},
+      };
+
+      await repo.delete(agg, ctx as Parameters<typeof repo.delete>[1]);
+
+      expect(adapter.deleteCalls[0]?.opts.where).toEqual({ id: 'a1' });
+      expect(adapter.deleteCalls[0]?.opts.optimisticLock).toEqual({
+        column: 'updated_at',
+        expected: updatedAt,
+      });
+    });
+
+    it('omits optimisticLock when the aggregate has no updatedAt', async () => {
+      const agg = TestAggregate.create('a1', 'foo');
+      const ctx = {
+        trx,
+        registerAggregate: () => {},
+        registerIntegrationEvent: () => {},
+      };
+
+      await repo.delete(agg, ctx as Parameters<typeof repo.delete>[1]);
+
+      expect(adapter.deleteCalls[0]?.opts.optimisticLock).toBeUndefined();
+    });
+  });
+
   describe('updateMany / deleteMany', () => {
     it('updateMany delegates to dao.updateMany without re-registering', async () => {
       const registered: unknown[] = [];
