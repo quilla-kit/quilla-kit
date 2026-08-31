@@ -9,6 +9,7 @@ import { DefaultResponseSerializer } from '../../request/default.serializer.js';
 import { HttpAttributes } from '../../request/http-attributes.js';
 import type { NormalizedRoute } from '../../router/normalized-route.type.js';
 import type { Router } from '../../router/router.js';
+import type { CorsOptions } from '../../server/cors.type.js';
 import type { HttpConventions } from '../../server/http-conventions.type.js';
 import type { WebServer } from '../../server/web-server.interface.js';
 import type { RequestValidator } from '../../validator/request-validator.interface.js';
@@ -22,17 +23,13 @@ export type HonoServeHandle = {
 
 export type HonoServeFn = (app: Hono, port: number) => HonoServeHandle;
 
-export type HonoCorsOptions = {
-  readonly origins: string[];
-};
-
 export type HonoServerOptions = {
   readonly port: number;
   readonly router: Router;
   readonly serve: HonoServeFn;
   readonly requestValidator?: RequestValidator;
   readonly logger?: Logger;
-  readonly cors?: HonoCorsOptions;
+  readonly cors?: CorsOptions;
   readonly conventions?: HttpConventions;
 };
 
@@ -69,13 +66,14 @@ export class HonoServer implements WebServer {
     });
 
     if (this.options.cors) {
-      const { origins } = this.options.cors;
+      const { origins, exposeHeaders } = this.options.cors;
       this.app.use(
         '*',
         cors({
           origin: (origin) => (origins.includes(origin) ? origin : null),
           allowMethods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
           allowHeaders: ['Content-Type', 'Authorization', 'If-Match', 'ETag'],
+          exposeHeaders: [...new Set(['ETag', ...(exposeHeaders ?? [])])],
           credentials: true,
           maxAge: 86400,
         }),
