@@ -1,6 +1,6 @@
 {
   "name": "@quilla-be-kit/persistence",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "description": "Persistence primitives: Database, DAOs with audit injection and optimistic locking, aggregate repositories with scope isolation, UnitOfWork with pluggable outbox.",
   "license": "MIT",
   "author": "Max Martinez",
