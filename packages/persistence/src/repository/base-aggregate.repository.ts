@@ -47,8 +47,12 @@ export abstract class BaseAggregateRepository<
     // Aggregates already registered in ctx via loadForUpdate*.
   }
 
-  async delete(aggregate: TAggregate, ctx: UnitOfWorkContext): Promise<void> {
-    await this.writeDao.delete({ id: aggregate.id, updated_at: aggregate.updatedAt }, ctx.trx);
+  async delete(
+    aggregate: TAggregate,
+    expectedUpdatedAt: Date,
+    ctx: UnitOfWorkContext,
+  ): Promise<void> {
+    await this.writeDao.delete({ id: aggregate.id, updated_at: expectedUpdatedAt }, ctx.trx);
     // Aggregate already registered in ctx via loadForUpdate*.
   }
 
