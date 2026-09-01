@@ -89,7 +89,7 @@ describe('BaseUnscopedAggregateRepository', () => {
   });
 
   describe('delete', () => {
-    it('passes aggregate.updatedAt through as optimisticLock', async () => {
+    it('passes the explicit expectedUpdatedAt through as optimisticLock', async () => {
       const updatedAt = new Date('2026-01-01');
       const agg = new TestAggregate({ id: 'a1', name: 'foo', updatedAt }, 'a1');
       const ctx = {
@@ -98,7 +98,7 @@ describe('BaseUnscopedAggregateRepository', () => {
         registerIntegrationEvent: () => {},
       };
 
-      await repo.delete(agg, ctx as Parameters<typeof repo.delete>[1]);
+      await repo.delete(agg, updatedAt, ctx as Parameters<typeof repo.delete>[2]);
 
       expect(adapter.deleteCalls[0]?.opts.where).toEqual({ id: 'a1' });
       expect(adapter.deleteCalls[0]?.opts.optimisticLock).toEqual({
@@ -107,17 +107,24 @@ describe('BaseUnscopedAggregateRepository', () => {
       });
     });
 
-    it('omits optimisticLock when the aggregate has no updatedAt', async () => {
-      const agg = TestAggregate.create('a1', 'foo');
+    it('forwards a caller-supplied expectedUpdatedAt even when it differs from aggregate state', async () => {
+      const staleClaimed = new Date('2025-06-01');
+      const agg = new TestAggregate(
+        { id: 'a1', name: 'foo', updatedAt: new Date('2026-01-01') },
+        'a1',
+      );
       const ctx = {
         trx,
         registerAggregate: () => {},
         registerIntegrationEvent: () => {},
       };
 
-      await repo.delete(agg, ctx as Parameters<typeof repo.delete>[1]);
+      await repo.delete(agg, staleClaimed, ctx as Parameters<typeof repo.delete>[2]);
 
-      expect(adapter.deleteCalls[0]?.opts.optimisticLock).toBeUndefined();
+      expect(adapter.deleteCalls[0]?.opts.optimisticLock).toEqual({
+        column: 'updated_at',
+        expected: staleClaimed,
+      });
     });
   });
 

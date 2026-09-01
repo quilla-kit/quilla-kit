@@ -43,11 +43,14 @@ pnpm add pg
   "someone else just modified it" — callers that need to tell "conflict"
   apart from "already deleted" must check existence themselves (e.g. a
   preceding `findOneById`). Omit `updated_at` to update/delete
-  unconditionally. `BaseAggregateRepository.delete()` threads
-  `aggregate.updatedAt` through automatically. `updateMany`/`deleteMany`
-  have no per-row lock — callers needing concurrency control on a bulk
-  write should `findManyForUpdate` first; the row-level locks held inside
-  the transaction already serialize concurrent writers.
+  unconditionally. `BaseAggregateRepository.delete(aggregate, expectedUpdatedAt, ctx)`
+  requires the expected version explicitly — pass `aggregate.updatedAt` to
+  reproduce CAS protection off a `loadForUpdate*` read, or a caller-claimed
+  version if you need to check against something other than what was just
+  read. `updateMany`/`deleteMany` have no per-row lock — callers needing
+  concurrency control on a bulk write should `findManyForUpdate` first; the
+  row-level locks held inside the transaction already serialize concurrent
+  writers.
 - **Outbox is orthogonal, not built-in.** Wire an `OutboxWriter` on
   `UnitOfWork` to drain aggregate events + registered integration events
   in the same transaction. Omit for apps that don't use outbox.
@@ -225,10 +228,25 @@ await userDao.delete({ id: userId }, ctx.trx);
 await userDao.delete({ id: userId, updated_at: knownUpdatedAt }, ctx.trx);
 ```
 
-`BaseAggregateRepository.delete(aggregate, ctx)` passes `aggregate.updatedAt`
-through automatically, so aggregate deletes get CAS protection for free
-whenever the aggregate was loaded via `loadForUpdate*` (no code change
-needed at call sites above the repository).
+`BaseAggregateRepository.delete(aggregate, expectedUpdatedAt, ctx)` requires
+the expected version as an explicit argument rather than deriving it from
+the aggregate's in-memory state:
+
+```ts
+// CAS-protected off the loadForUpdate* read (the common case). `updatedAt`
+// is typed `Date | undefined` on Entity (an unpersisted aggregate has
+// none), but an aggregate that just came back from loadForUpdate* always
+// has one — non-null assert or throw if you want that checked explicitly:
+await userRepo.delete(user, user.updatedAt!, ctx);
+
+// CAS-protected against a caller-claimed version instead — e.g. an
+// If-Match / version field the client submitted before this transaction
+// started, which may differ from what loadForUpdate* just read:
+await userRepo.delete(user, clientClaimedUpdatedAt, ctx);
+```
+
+Being explicit means callers never need to mutate the aggregate's
+`updatedAt` in memory to influence the lock — the value flows in directly.
 
 ### Filtering on write DAOs
 
