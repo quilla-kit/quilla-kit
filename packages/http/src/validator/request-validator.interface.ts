@@ -9,7 +9,8 @@ export interface RequestValidator {
   /**
    * Optional schema introspection. When implemented, `@ValidateRequest`
    * uses it to inject auth-derived fields (`scopeId`, `userId`) from the
-   * `ExecutionContext` into the validated input **only when the schema
+   * `ExecutionContext`, and the reserved `updatedAt` field from the
+   * `If-Match` header, into the validated input **only when the schema
    * declares them**.
    *
    * Return `null` (or leave unimplemented) when the wrapped validator

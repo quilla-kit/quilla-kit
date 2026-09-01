@@ -13,7 +13,8 @@ export type ZodRequestValidatorOptions = {
 /**
  * `RequestValidator` adapter for Zod 4. Implements `describeSchema` so
  * `@ValidateRequest` can inject `scopeId` / `userId` from the active
- * `ExecutionContext` into payloads whose schemas declare those keys.
+ * `ExecutionContext`, and `updatedAt` from the `If-Match` header, into
+ * payloads whose schemas declare those keys.
  *
  * Handles the two common shapes:
  *

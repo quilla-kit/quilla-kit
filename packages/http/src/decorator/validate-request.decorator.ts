@@ -2,6 +2,7 @@ import { ValidationError } from '@quilla-be-kit/errors';
 import { HttpAttributes } from '../request/http-attributes.js';
 import type { HttpRequest } from '../request/http-request.interface.js';
 import type { HttpResponse } from '../request/http-response.type.js';
+import type { HeaderSourceMap } from '../validator/header-source.type.js';
 import type { RequestSource } from '../validator/request-source.type.js';
 import type { RequestValidator } from '../validator/request-validator.interface.js';
 import { addRoutePatch } from './route.metadata.js';
@@ -17,7 +18,17 @@ const SOURCE_READERS: Record<RequestSource, (req: HttpRequest) => object> = {
   query: (req) => req.getQuery(),
 };
 
-export function ValidateRequest(schema: unknown, sources: readonly RequestSource[]) {
+// OCC is a first-class concept in this toolkit (see the persistence
+// package's `expectedUpdatedAt`), so `updatedAt` gets the same reserved-key
+// treatment as `scopeId`/`userId` below — sourced from `If-Match` unless a
+// route overrides it via the `headers` argument.
+const DEFAULT_HEADER_MAP: HeaderSourceMap = { updatedAt: 'If-Match' };
+
+export function ValidateRequest(
+  schema: unknown,
+  sources: readonly RequestSource[],
+  headers?: HeaderSourceMap,
+) {
   return (
     originalMethod: ControllerMethod,
     context: ClassMethodDecoratorContext,
@@ -27,7 +38,7 @@ export function ValidateRequest(schema: unknown, sources: readonly RequestSource
     }
 
     addRoutePatch(context.metadata as Record<string | symbol, unknown>, context.name as string, {
-      validation: { schema, sources },
+      validation: headers ? { schema, sources, headers } : { schema, sources },
     });
 
     return function (this: unknown, request: HttpRequest): Promise<HttpResponse> {
@@ -55,6 +66,17 @@ export function ValidateRequest(schema: unknown, sources: readonly RequestSource
         if (session) {
           if (description.keys.includes('scopeId')) raw.scopeId = session.scopeId;
           if (description.keys.includes('userId')) raw.userId = session.userId;
+        }
+
+        // Header-derived fields are injected only when the schema declares
+        // them, same rule as the session-derived fields above, and only when
+        // the header is actually sent — a merely-declared but unsent header
+        // must never blank out a value the source merge already produced.
+        const effectiveHeaders = { ...DEFAULT_HEADER_MAP, ...headers };
+        for (const [key, headerName] of Object.entries(effectiveHeaders)) {
+          if (!description.keys.includes(key)) continue;
+          const value = request.getHeader(headerName);
+          if (value !== null) raw[key] = value;
         }
       }
 

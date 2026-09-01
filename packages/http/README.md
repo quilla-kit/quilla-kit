@@ -318,9 +318,9 @@ Scope-based authorization. Reads an `AuthenticatedToken` from `request.getAttrib
 
 Throws `ForbiddenError` on missing token or mismatch. An auth middleware (from `@quilla-be-kit/security` or consumer code) must have populated the `VERIFIED_TOKEN` attribute.
 
-### `@ValidateRequest(schema, sources)`
+### `@ValidateRequest(schema, sources, headers?)`
 
-Merges data from the configured sources (`'body'`, `'params'`, `'query'`), injects `scopeId` and `userId` from `ExecutionContext.session` **only when the schema declares those keys and a session is active**, validates against `schema` using the server's `RequestValidator`, and attaches the validated value to the request. Retrieve with `request.getValidatedInput<T>()`.
+Merges data from the configured sources (`'body'`, `'params'`, `'query'`), injects `scopeId` and `userId` from `ExecutionContext.session` **only when the schema declares those keys and a session is active**, injects header-sourced fields (see below), validates against `schema` using the server's `RequestValidator`, and attaches the validated value to the request. Retrieve with `request.getValidatedInput<T>()`.
 
 Auth-injection requires two things:
 - A live `session` on the request's `ExecutionContext` (i.e. the route ran through auth middleware that established one — anonymous and system contexts get no injection).
@@ -336,6 +336,37 @@ async create(req: HttpRequest): Promise<HttpResponse> {
 ```
 
 On validation failure, throws `ValidationError` with `context.issues` containing the validator's raw error array (e.g. Zod issues, Joi details). The default error resolver (`DefaultErrorResolver`) surfaces this as a 400 response with `body.error.details.issues`. See [Error status mapping](#error-status-mapping) for how that 400 is derived, and [Response and error conventions](#response-and-error-conventions) to override the wire shape.
+
+#### Header-sourced fields (optimistic concurrency / `If-Match`)
+
+`updatedAt` is a reserved key, same tier as `scopeId`/`userId`: whenever `describeSchema` reports the schema declares an `updatedAt` field, its raw value is auto-sourced from the `If-Match` header — no third argument required. Injection only happens when the header is actually sent; it never overwrites a body/params/query-supplied value with `null` just because `If-Match` was absent. Keep the actual OCC parsing (stripping the weak-validator prefix/quotes, converting to the target type) in the schema's own `.transform()` — the toolkit's job is only "read `If-Match`, inject its raw string value if present":
+
+```ts
+const updateWidgetSchema = z.object({
+  name: z.string(),
+  updatedAt: z.string().transform(parseWeakEtag), // sourced from If-Match automatically
+});
+
+@Put('/:id')
+@ValidateRequest(updateWidgetSchema, ['body', 'params'])
+async update(req: HttpRequest): Promise<HttpResponse> {
+  const command = req.getValidatedInput<UpdateWidgetCommand>();
+  // command.updatedAt is already the parsed value — no manual splicing needed,
+  // and this works for DELETE routes with no body too.
+}
+```
+
+The optional third argument, `headers: Readonly<Record<string, string>>` (schema key → header name), is both the escape hatch for any other header-sourced field and the override for a route that needs a different header (or field name) for OCC — entries here win over the `updatedAt`/`If-Match` default:
+
+```ts
+@Delete('/:id')
+@ValidateRequest(deleteWidgetSchema, ['params'], { expectedUpdatedAt: 'X-Expected-Version' })
+async delete(req: HttpRequest): Promise<HttpResponse> {
+  const command = req.getValidatedInput<DeleteWidgetCommand>();
+  // command.expectedUpdatedAt sourced from X-Expected-Version instead of
+  // the default updatedAt/If-Match pairing
+}
+```
 
 ## Multipart / form-data
 

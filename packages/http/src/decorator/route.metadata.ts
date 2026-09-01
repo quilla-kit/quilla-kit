@@ -1,3 +1,4 @@
+import type { HeaderSourceMap } from '../validator/header-source.type.js';
 import type { RequestSource } from '../validator/request-source.type.js';
 
 // Node 22 has no native Symbol.metadata; stage-3 decorator emit writes metadata
@@ -25,6 +26,7 @@ export type RouteDefinition = {
   readonly validation?: {
     readonly schema: unknown;
     readonly sources: readonly RequestSource[];
+    readonly headers?: HeaderSourceMap;
   };
 };
 
