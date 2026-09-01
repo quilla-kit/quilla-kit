@@ -1,6 +1,6 @@
 {
   "name": "@quilla-be-kit/http",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Framework-agnostic HTTP layer: decorators (@Controller/@Get/@Post/.../@AuthorizeScope/@ValidateRequest), framework-agnostic router, WebServer interface, and a Hono adapter sub-path.",
   "license": "MIT",
   "author": "Max Martinez",
